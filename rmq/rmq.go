@@ -83,7 +83,7 @@ func (r *Rmq) HandleMessage(name string, handler func(msg amqp.Delivery) []byte)
 	q, err := r.ch.QueueDeclare(
 		name,
 		false,
-		true,
+		false,
 		false,
 		false,
 		nil,
