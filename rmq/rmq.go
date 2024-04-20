@@ -41,8 +41,8 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 		return nil, err
 	}
 	err = r.ch.PublishWithContext(ctx,
-		sendTo,
 		"",
+		sendTo,
 		false,
 		false,
 		amqp.Publishing{
@@ -104,7 +104,7 @@ func (r *Rmq) HandleMessage(name string, handler func(msg amqp.Delivery) []byte)
 	defer r.ch.Cancel(q.Name, false)
 	for d := range msgs {
 		err := r.ch.PublishWithContext(context.Background(),
-			d.ReplyTo,
+			"",
 			d.ReplyTo,
 			false,
 			false,
