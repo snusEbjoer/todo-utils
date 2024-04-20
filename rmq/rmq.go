@@ -9,10 +9,11 @@ import (
 )
 
 type Rmq struct {
-	ch *amqp.Channel
+	ch    *amqp.Channel
+	Queue amqp.Queue
 }
 
-func New(url string) (*Rmq, error) {
+func New(url string, queue string) (*Rmq, error) {
 	conn, err := amqp.Dial(url)
 	if err != nil {
 		return nil, err
@@ -21,18 +22,10 @@ func New(url string) (*Rmq, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err != nil {
-		return nil, err
-	}
-	return &Rmq{ch}, nil
-}
-
-func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, error) {
-	corrId := utils.RandomString(32)
-	q, err := r.ch.QueueDeclare(
-		"",
+	q, err := ch.QueueDeclare(
+		queue,
 		false,
-		true,
+		false,
 		false,
 		false,
 		nil,
@@ -40,7 +33,12 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	err = r.ch.PublishWithContext(ctx,
+	return &Rmq{ch, q}, nil
+}
+
+func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, error) {
+	corrId := utils.RandomString(32)
+	err := r.ch.PublishWithContext(ctx,
 		"",
 		sendTo,
 		false,
@@ -48,7 +46,7 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 		amqp.Publishing{
 			ContentType:   "application/json",
 			Body:          body,
-			ReplyTo:       q.Name,
+			ReplyTo:       r.Queue.Name,
 			CorrelationId: corrId,
 		},
 	)
@@ -56,7 +54,7 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 		return nil, err
 	}
 	msgs, err := r.ch.Consume(
-		q.Name,
+		r.Queue.Name,
 		"",
 		false,
 		false,
@@ -79,19 +77,18 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 	return data, err
 }
 
-func (r *Rmq) HandleMessage(name string, handler func(msg amqp.Delivery) []byte) {
-	q, err := r.ch.QueueDeclare(
-		name,
-		false,
-		false,
-		false,
+func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) []byte) {
+	err := r.ch.QueueBind(
+		r.Queue.Name,
+		routingKey,
+		"",
 		false,
 		nil,
 	)
 	utils.FailOnError(err, "handle later")
 	msgs, err := r.ch.Consume(
-		q.Name,
-		q.Name,
+		r.Queue.Name,
+		r.Queue.Name,
 		false,
 		false,
 		false,
@@ -101,7 +98,7 @@ func (r *Rmq) HandleMessage(name string, handler func(msg amqp.Delivery) []byte)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer r.ch.Cancel(q.Name, false)
+	defer r.ch.Cancel(r.Queue.Name, false)
 	for d := range msgs {
 		err := r.ch.PublishWithContext(context.Background(),
 			"",
