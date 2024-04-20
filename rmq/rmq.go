@@ -92,7 +92,7 @@ func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) [
 	err := r.ch.QueueBind(
 		r.queue.Name,
 		routingKey,
-		"",
+		r.queue.Name,
 		false,
 		nil,
 	)
@@ -115,7 +115,7 @@ func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) [
 	for d := range msgs {
 		if routingKey == d.RoutingKey {
 			err := r.ch.PublishWithContext(context.Background(),
-				"",
+				d.ReplyTo,
 				d.ReplyTo,
 				false,
 				false,
