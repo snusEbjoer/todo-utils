@@ -9,11 +9,10 @@ import (
 )
 
 type Rmq struct {
-	ch    *amqp.Channel
-	queue amqp.Queue
+	ch *amqp.Channel
 }
 
-func New(url string, name string) (*Rmq, error) {
+func New(url string) (*Rmq, error) {
 	conn, err := amqp.Dial(url)
 	if err != nil {
 		return nil, err
@@ -22,21 +21,13 @@ func New(url string, name string) (*Rmq, error) {
 	if err != nil {
 		return nil, err
 	}
-	q, err := ch.QueueDeclare(
-		name,
-		false,
-		false,
-		false,
-		false,
-		nil,
-	)
 	if err != nil {
 		return nil, err
 	}
-	return &Rmq{ch, q}, nil
+	return &Rmq{ch}, nil
 }
 
-func (r *Rmq) Send(ctx context.Context, routingKey string, body []byte) ([]byte, error) {
+func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, error) {
 	corrId := utils.RandomString(32)
 	q, err := r.ch.QueueDeclare(
 		"",
@@ -50,8 +41,8 @@ func (r *Rmq) Send(ctx context.Context, routingKey string, body []byte) ([]byte,
 		return nil, err
 	}
 	err = r.ch.PublishWithContext(ctx,
-		r.queue.Name,
-		routingKey,
+		sendTo,
+		"",
 		false,
 		false,
 		amqp.Publishing{
@@ -88,20 +79,19 @@ func (r *Rmq) Send(ctx context.Context, routingKey string, body []byte) ([]byte,
 	return data, err
 }
 
-func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) []byte) {
-	err := r.ch.QueueBind(
-		r.queue.Name,
-		routingKey,
-		r.queue.Name,
+func (r *Rmq) HandleMessage(name string, handler func(msg amqp.Delivery) []byte) {
+	q, err := r.ch.QueueDeclare(
+		name,
+		false,
+		true,
+		false,
 		false,
 		nil,
 	)
-	if err != nil {
-		log.Fatal(err)
-	}
+	utils.FailOnError(err, "handle later")
 	msgs, err := r.ch.Consume(
-		r.queue.Name,
-		routingKey,
+		q.Name,
+		q.Name,
 		false,
 		false,
 		false,
@@ -111,23 +101,21 @@ func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) [
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer r.ch.Cancel(routingKey, false)
+	defer r.ch.Cancel(q.Name, false)
 	for d := range msgs {
-		if routingKey == d.RoutingKey {
-			err := r.ch.PublishWithContext(context.Background(),
-				d.ReplyTo,
-				d.ReplyTo,
-				false,
-				false,
-				amqp.Publishing{
-					Body:          handler(d),
-					ContentType:   "application/json",
-					CorrelationId: d.CorrelationId,
-				})
-			if err != nil {
-				log.Fatal(err)
-			}
-			break
+		err := r.ch.PublishWithContext(context.Background(),
+			d.ReplyTo,
+			d.ReplyTo,
+			false,
+			false,
+			amqp.Publishing{
+				Body:          handler(d),
+				ContentType:   "application/json",
+				CorrelationId: d.CorrelationId,
+			})
+		if err != nil {
+			log.Fatal(err)
 		}
+		break
 	}
 }
