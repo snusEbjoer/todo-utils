@@ -64,6 +64,7 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 		false,
 		nil,
 	)
+	defer r.ch.Cancel("", false)
 	if err != nil {
 		return nil, err
 	}
