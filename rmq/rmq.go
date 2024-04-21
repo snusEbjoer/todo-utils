@@ -49,9 +49,6 @@ func New(url string, queue string) (*Rmq, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err != nil {
-		return nil, err
-	}
 	return &Rmq{ch, conn, q, queue + "_topic"}, nil
 }
 func GetTopic(routingKey string) string {
@@ -95,6 +92,7 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 		false,
 		nil,
 	)
+	defer r.ch.Cancel(r.queue.Name, false)
 	if err != nil {
 		return nil, err
 	}
