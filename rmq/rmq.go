@@ -2,7 +2,9 @@ package rmq
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strings"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/snusEbjoer/todo-utils/utils"
@@ -10,8 +12,9 @@ import (
 
 type Rmq struct {
 	ch       *amqp.Channel
-	Queue    amqp.Queue
-	Exchange string
+	conn     *amqp.Connection
+	queue    amqp.Queue
+	exchange string
 }
 
 func New(url string, queue string) (*Rmq, error) {
@@ -46,30 +49,37 @@ func New(url string, queue string) (*Rmq, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Rmq{ch, q, queue + "_topic"}, nil
+	if err != nil {
+		return nil, err
+	}
+	return &Rmq{ch, conn, q, queue + "_topic"}, nil
 }
-
+func GetTopic(routingKey string) string {
+	arr := strings.Split(routingKey, ".")
+	return arr[0] + "_topic"
+}
 func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, error) {
 	corrId := utils.RandomString(32)
-	err := r.ch.PublishWithContext(ctx,
-		r.Exchange,
+	err := r.ch.PublishWithContext(
+		context.Background(),
+		GetTopic(sendTo),
 		sendTo,
 		false,
 		false,
 		amqp.Publishing{
-			ContentType:   "application/json",
 			Body:          body,
-			ReplyTo:       r.Queue.Name,
+			ContentType:   "application/json",
 			CorrelationId: corrId,
+			ReplyTo:       r.exchange,
 		},
 	)
 	if err != nil {
 		return nil, err
 	}
 	err = r.ch.QueueBind(
-		r.Queue.Name,
+		r.queue.Name,
 		sendTo,
-		r.Exchange,
+		r.exchange,
 		false,
 		nil,
 	)
@@ -77,8 +87,8 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 		return nil, err
 	}
 	msgs, err := r.ch.Consume(
-		r.Queue.Name,
-		"",
+		r.queue.Name,
+		r.queue.Name,
 		false,
 		false,
 		false,
@@ -88,54 +98,86 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	defer r.ch.Cancel("", false)
-	var data []byte
 	for d := range msgs {
-		if corrId == d.CorrelationId {
-			data = d.Body
-			d.Ack(true)
-			break
+		if d.CorrelationId == corrId {
+			return d.Body, nil
 		}
 	}
-	return data, err
+	return nil, err
 }
 
 func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) []byte) {
-	err := r.ch.QueueBind(
-		r.Queue.Name,
+	ch, err := r.conn.Channel()
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = ch.QueueBind(
+		r.queue.Name,
 		routingKey,
-		r.Exchange,
-		false,
-		nil,
-	)
-	utils.FailOnError(err, "handle later")
-	msgs, err := r.ch.Consume(
-		r.Queue.Name,
-		r.Queue.Name,
-		false,
-		false,
-		false,
+		r.exchange,
 		false,
 		nil,
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer r.ch.Cancel(r.Queue.Name, false)
-	for d := range msgs {
-		err := r.ch.PublishWithContext(context.Background(),
-			r.Exchange,
-			routingKey+".resp",
-			false,
-			false,
-			amqp.Publishing{
-				Body:          handler(d),
-				ContentType:   "application/json",
-				CorrelationId: d.CorrelationId,
-			})
-		if err != nil {
-			log.Fatal(err)
-		}
-		break
+	msgs, err := ch.Consume(
+		r.queue.Name,
+		r.queue.Name,
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	defer ch.Close()
+	if err != nil {
+		log.Fatal(err)
 	}
+	for d := range msgs {
+		fmt.Println(d.RoutingKey)
+		if routingKey == d.RoutingKey {
+			r.ch.PublishWithContext(
+				context.Background(),
+				d.ReplyTo,
+				d.RoutingKey,
+				false,
+				false,
+				amqp.Publishing{
+					Body:          handler(d),
+					ContentType:   d.ContentType,
+					CorrelationId: d.CorrelationId,
+				},
+			)
+			d.Ack(true)
+		}
+	}
+}
+
+func (r *Rmq) Listen() {
+	ch, err := r.conn.Channel()
+	if err != nil {
+		log.Fatal(err)
+	}
+	msgs, err := ch.Consume(
+		r.queue.Name,
+		r.queue.Name,
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	defer ch.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+	var forever chan struct{}
+	go func() {
+		for d := range msgs {
+			fmt.Printf("got message with routong key: %s", d.RoutingKey)
+		}
+	}()
+	fmt.Println("Waiting for messages")
+	<-forever
 }
