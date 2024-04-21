@@ -9,8 +9,9 @@ import (
 )
 
 type Rmq struct {
-	ch    *amqp.Channel
-	Queue amqp.Queue
+	ch       *amqp.Channel
+	Queue    amqp.Queue
+	Exchange string
 }
 
 func New(url string, queue string) (*Rmq, error) {
@@ -19,6 +20,18 @@ func New(url string, queue string) (*Rmq, error) {
 		return nil, err
 	}
 	ch, err := conn.Channel()
+	if err != nil {
+		return nil, err
+	}
+	err = ch.ExchangeDeclare(
+		queue+"_topic",
+		"topic",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -33,13 +46,13 @@ func New(url string, queue string) (*Rmq, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Rmq{ch, q}, nil
+	return &Rmq{ch, q, queue + "_topic"}, nil
 }
 
 func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, error) {
 	corrId := utils.RandomString(32)
 	err := r.ch.PublishWithContext(ctx,
-		"",
+		r.Exchange,
 		sendTo,
 		false,
 		false,
@@ -49,6 +62,16 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 			ReplyTo:       r.Queue.Name,
 			CorrelationId: corrId,
 		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	err = r.ch.QueueBind(
+		r.Queue.Name,
+		sendTo,
+		r.Exchange,
+		false,
+		nil,
 	)
 	if err != nil {
 		return nil, err
@@ -81,7 +104,7 @@ func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) [
 	err := r.ch.QueueBind(
 		r.Queue.Name,
 		routingKey,
-		"",
+		r.Exchange,
 		false,
 		nil,
 	)
@@ -101,8 +124,8 @@ func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) [
 	defer r.ch.Cancel(r.Queue.Name, false)
 	for d := range msgs {
 		err := r.ch.PublishWithContext(context.Background(),
-			"",
-			d.ReplyTo,
+			r.Exchange,
+			routingKey+".resp",
 			false,
 			false,
 			amqp.Publishing{
