@@ -2,7 +2,6 @@ package rmq
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strings"
 
@@ -10,17 +9,12 @@ import (
 	"github.com/snusEbjoer/todo-utils/utils"
 )
 
-type Handler struct {
-	routingKey string
-	handler    func(msg amqp.Delivery) []byte
-}
-
 type Rmq struct {
 	ch       *amqp.Channel
 	conn     *amqp.Connection
 	queue    amqp.Queue
 	exchange string
-	handlers []Handler
+	handlers map[string]func(msg amqp.Delivery) []byte
 }
 
 func New(url string, queue string) (*Rmq, error) {
@@ -55,15 +49,14 @@ func New(url string, queue string) (*Rmq, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err != nil {
-		return nil, err
-	}
-	return &Rmq{ch, conn, q, queue + "_topic", []Handler{}}, nil
+	return &Rmq{ch, conn, q, queue + "_topic", map[string]func(msg amqp.Delivery) []byte{}}, nil
 }
+
 func GetTopic(routingKey string) string {
 	arr := strings.Split(routingKey, ".")
 	return arr[0] + "_topic"
 }
+
 func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, error) {
 	ch, err := r.conn.Channel()
 	if err != nil {
@@ -111,7 +104,6 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 		return nil, err
 	}
 	for d := range msgs {
-		fmt.Printf("get msg from %s with routing key : %s \n", d.Exchange, d.RoutingKey)
 		if d.CorrelationId == corrId && d.RoutingKey == sendTo {
 			d.Ack(true)
 			return d.Body, nil
@@ -121,34 +113,30 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 }
 
 func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) []byte) {
-	r.handlers = append(r.handlers, Handler{routingKey: routingKey, handler: handler})
+	r.handlers[routingKey] = handler
 }
 
-func (r *Rmq) Reply(d amqp.Delivery, h Handler) {
+func (r *Rmq) Reply(d amqp.Delivery, handler func(msg amqp.Delivery) []byte) {
 	ch, err := r.conn.Channel()
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err != nil {
-		log.Fatal(err)
-	}
 
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(d.RoutingKey)
-	ch.PublishWithContext(
+	err = ch.PublishWithContext(
 		context.Background(),
 		d.ReplyTo,
 		d.RoutingKey,
 		false,
 		false,
 		amqp.Publishing{
-			Body:          h.handler(d),
+			Body:          handler(d),
 			ContentType:   d.ContentType,
 			CorrelationId: d.CorrelationId,
 		},
 	)
+	if err != nil {
+		log.Fatal(err)
+	}
 	d.Ack(true)
 	ch.Close()
 }
@@ -158,14 +146,12 @@ func (r *Rmq) Listen() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	defer ch.Close()
-	if err != nil {
-		log.Fatal(err)
-	}
-	for _, h := range r.handlers {
+	for k := range r.handlers {
 		err := ch.QueueBind(
 			r.queue.Name,
-			h.routingKey,
+			k,
 			r.exchange,
 			false,
 			nil,
@@ -187,17 +173,12 @@ func (r *Rmq) Listen() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	var forever chan struct{}
-	go func() {
-		for d := range msgs {
-			for _, h := range r.handlers {
-				if h.routingKey == d.RoutingKey {
-					go r.Reply(d, h)
-				}
 
-			}
+	for d := range msgs {
+		handler, ok := r.handlers[d.RoutingKey]
+		if ok {
+			go r.Reply(d, handler)
 		}
-	}()
-	fmt.Println("Waiting for messages")
-	<-forever
+	}
+
 }
