@@ -175,8 +175,7 @@ func (r *Rmq) Listen() {
 	}
 
 	for d := range msgs {
-		handler, ok := r.handlers[d.RoutingKey]
-		if ok {
+		if handler, ok := r.handlers[d.RoutingKey]; ok {
 			go r.Reply(d, handler)
 		}
 	}
