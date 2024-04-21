@@ -10,11 +10,17 @@ import (
 	"github.com/snusEbjoer/todo-utils/utils"
 )
 
+type Handler struct {
+	routingKey string
+	handler    func(msg amqp.Delivery) []byte
+}
+
 type Rmq struct {
 	ch       *amqp.Channel
 	conn     *amqp.Connection
 	queue    amqp.Queue
 	exchange string
+	handlers []Handler
 }
 
 func New(url string, queue string) (*Rmq, error) {
@@ -49,15 +55,23 @@ func New(url string, queue string) (*Rmq, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Rmq{ch, conn, q, queue + "_topic"}, nil
+	if err != nil {
+		return nil, err
+	}
+	return &Rmq{ch, conn, q, queue + "_topic", []Handler{}}, nil
 }
 func GetTopic(routingKey string) string {
 	arr := strings.Split(routingKey, ".")
 	return arr[0] + "_topic"
 }
 func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, error) {
+	ch, err := r.conn.Channel()
+	if err != nil {
+		return nil, err
+	}
+
 	corrId := utils.RandomString(32)
-	err := r.ch.PublishWithContext(
+	err = ch.PublishWithContext(
 		context.Background(),
 		GetTopic(sendTo),
 		sendTo,
@@ -73,7 +87,7 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	err = r.ch.QueueBind(
+	err = ch.QueueBind(
 		r.queue.Name,
 		sendTo,
 		r.exchange,
@@ -83,21 +97,23 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	msgs, err := r.ch.Consume(
+	msgs, err := ch.Consume(
 		r.queue.Name,
-		r.queue.Name,
+		"",
 		false,
 		false,
 		false,
 		false,
 		nil,
 	)
-	defer r.ch.Cancel(r.queue.Name, false)
+	defer ch.Close()
 	if err != nil {
 		return nil, err
 	}
 	for d := range msgs {
-		if d.CorrelationId == corrId {
+		fmt.Printf("get msg from %s with routing key : %s \n", d.Exchange, d.RoutingKey)
+		if d.CorrelationId == corrId && d.RoutingKey == sendTo {
+			d.Ack(true)
 			return d.Body, nil
 		}
 	}
@@ -105,51 +121,36 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 }
 
 func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) []byte) {
+	r.handlers = append(r.handlers, Handler{routingKey: routingKey, handler: handler})
+}
+
+func (r *Rmq) Reply(d amqp.Delivery, h Handler) {
 	ch, err := r.conn.Channel()
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = ch.QueueBind(
-		r.queue.Name,
-		routingKey,
-		r.exchange,
-		false,
-		nil,
-	)
 	if err != nil {
 		log.Fatal(err)
 	}
-	msgs, err := ch.Consume(
-		r.queue.Name,
-		r.queue.Name,
-		false,
-		false,
-		false,
-		false,
-		nil,
-	)
-	defer ch.Close()
+
 	if err != nil {
 		log.Fatal(err)
 	}
-	for d := range msgs {
-		fmt.Println(d.RoutingKey)
-		if routingKey == d.RoutingKey {
-			r.ch.PublishWithContext(
-				context.Background(),
-				d.ReplyTo,
-				d.RoutingKey,
-				false,
-				false,
-				amqp.Publishing{
-					Body:          handler(d),
-					ContentType:   d.ContentType,
-					CorrelationId: d.CorrelationId,
-				},
-			)
-			d.Ack(true)
-		}
-	}
+	fmt.Println(d.RoutingKey)
+	ch.PublishWithContext(
+		context.Background(),
+		d.ReplyTo,
+		d.RoutingKey,
+		false,
+		false,
+		amqp.Publishing{
+			Body:          h.handler(d),
+			ContentType:   d.ContentType,
+			CorrelationId: d.CorrelationId,
+		},
+	)
+	d.Ack(true)
+	ch.Close()
 }
 
 func (r *Rmq) Listen() {
@@ -157,23 +158,44 @@ func (r *Rmq) Listen() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer ch.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, h := range r.handlers {
+		err := ch.QueueBind(
+			r.queue.Name,
+			h.routingKey,
+			r.exchange,
+			false,
+			nil,
+		)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	msgs, err := ch.Consume(
 		r.queue.Name,
-		r.queue.Name,
+		"",
 		false,
 		false,
 		false,
 		false,
 		nil,
 	)
-	defer ch.Close()
 	if err != nil {
 		log.Fatal(err)
 	}
 	var forever chan struct{}
 	go func() {
 		for d := range msgs {
-			fmt.Printf("got message with routong key: %s", d.RoutingKey)
+			for _, h := range r.handlers {
+				if h.routingKey == d.RoutingKey {
+					go r.Reply(d, h)
+				}
+
+			}
 		}
 	}()
 	fmt.Println("Waiting for messages")
