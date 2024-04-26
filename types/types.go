@@ -14,7 +14,7 @@ type Tokens struct {
 type User struct {
 	Id             int       `json:"id"`
 	Username       string    `json:"username"`
-	Description    string    `json:"description"`
+	Description    *string   `json:"description"`
 	HashedPassword string    `json:"hashed_password"`
 	Created_at     time.Time `json:"created_at"`
 }
