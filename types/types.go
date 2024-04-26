@@ -1,9 +1,6 @@
 package types
 
-type UserSignUp struct {
+type UserCreds struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
-}
-
-type UserDto struct {
 }
