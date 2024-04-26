@@ -18,3 +18,8 @@ type User struct {
 	HashedPassword string    `json:"hashed_password"`
 	Created_at     time.Time `json:"created_at"`
 }
+
+type MessageBody struct {
+	StatusCode int    `json:"status_code"`
+	Message    string `json:"message"`
+}
