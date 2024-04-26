@@ -21,3 +21,9 @@ type TodoDto struct {
 	DoneAt      sql.NullTime `json:"done_at"`
 	UserId      int          `json:"user_id"`
 }
+
+type TokensDto struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	ExpiresIn    time.Time `json:"expires_in"`
+}
