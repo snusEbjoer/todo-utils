@@ -14,7 +14,7 @@ type Rmq struct {
 	conn     *amqp.Connection
 	queue    amqp.Queue
 	exchange string
-	handlers map[string]func(msg amqp.Delivery) []byte
+	handlers map[string]func(msg amqp.Delivery) Message
 }
 
 func New(url string, queue string) (*Rmq, error) {
@@ -49,7 +49,7 @@ func New(url string, queue string) (*Rmq, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Rmq{ch, conn, q, queue + "_topic", map[string]func(msg amqp.Delivery) []byte{}}, nil
+	return &Rmq{ch, conn, q, queue + "_topic", map[string]func(msg amqp.Delivery) Message{}}, nil
 }
 
 func GetTopic(routingKey string) string {
@@ -112,16 +112,21 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 	return nil, err
 }
 
-func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) []byte) {
+func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) Message) {
 	r.handlers[routingKey] = handler
 }
 
-func (r *Rmq) Reply(d amqp.Delivery, handler func(msg amqp.Delivery) []byte) {
+type Message struct {
+	Body []byte
+	Type string
+}
+
+func (r *Rmq) Reply(d amqp.Delivery, handler func(msg amqp.Delivery) Message) {
 	ch, err := r.conn.Channel()
 	if err != nil {
 		log.Fatal(err)
 	}
-
+	msg := handler(d)
 	err = ch.PublishWithContext(
 		context.Background(),
 		d.ReplyTo,
@@ -129,9 +134,10 @@ func (r *Rmq) Reply(d amqp.Delivery, handler func(msg amqp.Delivery) []byte) {
 		false,
 		false,
 		amqp.Publishing{
-			Body:          handler(d),
+			Body:          msg.Body,
 			ContentType:   d.ContentType,
 			CorrelationId: d.CorrelationId,
+			Type:          msg.Type,
 		},
 	)
 	if err != nil {
