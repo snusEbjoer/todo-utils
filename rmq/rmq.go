@@ -57,10 +57,10 @@ func GetTopic(routingKey string) string {
 	return arr[0] + "_topic"
 }
 
-func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, error) {
+func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) (amqp.Delivery, error) {
 	ch, err := r.conn.Channel()
 	if err != nil {
-		return nil, err
+		return amqp.Delivery{}, err
 	}
 
 	corrId := utils.RandomString(32)
@@ -78,7 +78,7 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 		},
 	)
 	if err != nil {
-		return nil, err
+		return amqp.Delivery{}, err
 	}
 	err = ch.QueueBind(
 		r.queue.Name,
@@ -88,7 +88,7 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 		nil,
 	)
 	if err != nil {
-		return nil, err
+		return amqp.Delivery{}, err
 	}
 	msgs, err := ch.Consume(
 		r.queue.Name,
@@ -101,15 +101,15 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) ([]byte, err
 	)
 	defer ch.Close()
 	if err != nil {
-		return nil, err
+		return amqp.Delivery{}, err
 	}
 	for d := range msgs {
 		if d.CorrelationId == corrId && d.RoutingKey == sendTo {
 			d.Ack(true)
-			return d.Body, nil
+			return d, nil
 		}
 	}
-	return nil, err
+	return amqp.Delivery{}, err
 }
 
 func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) Message) {
