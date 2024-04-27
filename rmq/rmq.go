@@ -117,8 +117,8 @@ func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) M
 }
 
 type Message struct {
-	Body []byte
-	Type string
+	Body    []byte
+	Headers amqp.Table
 }
 
 func (r *Rmq) Reply(d amqp.Delivery, handler func(msg amqp.Delivery) Message) {
@@ -137,7 +137,7 @@ func (r *Rmq) Reply(d amqp.Delivery, handler func(msg amqp.Delivery) Message) {
 			Body:          msg.Body,
 			ContentType:   d.ContentType,
 			CorrelationId: d.CorrelationId,
-			Type:          msg.Type,
+			Headers:       msg.Headers,
 		},
 	)
 	if err != nil {
