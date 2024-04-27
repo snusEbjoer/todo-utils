@@ -28,3 +28,9 @@ type MessageBody struct {
 	StatusCode int    `json:"status_code"`
 	Message    string `json:"message"`
 }
+
+type UpdateUser struct {
+	Id          *int    `json:"id"`
+	Username    *string `json:"username"`
+	Description *string `json:"description"`
+}
