@@ -126,6 +126,7 @@ func (r *Rmq) Reply(d amqp.Delivery, handler func(msg amqp.Delivery) Message) {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	msg := handler(d)
 	err = ch.PublishWithContext(
 		context.Background(),

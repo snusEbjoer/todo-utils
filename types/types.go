@@ -2,6 +2,11 @@ package types
 
 import "time"
 
+type KeyType string
+
+const UserIDKey KeyType = "id"
+const UsernameKey KeyType = "username"
+
 type UserCreds struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
