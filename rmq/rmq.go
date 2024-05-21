@@ -3,6 +3,7 @@ package rmq
 import (
 	"context"
 	"log"
+	"net/http"
 	"strings"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -114,6 +115,18 @@ func (r *Rmq) Send(ctx context.Context, sendTo string, body []byte) (amqp.Delive
 
 func (r *Rmq) HandleMessage(routingKey string, handler func(msg amqp.Delivery) Message) {
 	r.handlers[routingKey] = handler
+}
+func NewErrorMessage(message string, status int) Message {
+	headers := amqp.Table{
+		"status": status,
+	}
+	return Message{
+		Body:    []byte(message),
+		Headers: headers,
+	}
+}
+func NewOkMessage(body []byte) Message {
+	return Message{Body: body, Headers: amqp.Table{"status": http.StatusOK}}
 }
 
 type Message struct {
